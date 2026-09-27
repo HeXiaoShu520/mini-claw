@@ -9,7 +9,7 @@ description: 把固化的流程封装为脚本能力（写代码、进策略名�
 
 ## 为什么转
 
-技能是公开的说明书：藏不住、挡不住，AI 照样能按它模拟执行。**脚本才有授权边界**——策略文件里把脚本名加进某个组的 `tools` 名单，能力才真正可控。
+工具把固定流程、参数校验和结果处理封装成实际执行能力。注册后的工具调用受 `.agent/permissions.json` 的个人策略约束；工具内部代码由本人信任并管理，调用门禁不是代码沙箱。
 
 ## 什么时候不转
 
@@ -52,7 +52,7 @@ export default {
 - **变化的做成 `parameters`，固定的写进代码**——参数越少越安全
 - 返回值固定为 `{ content: [...], details: {} }`；失败直接 `throw`
 - `.ts` 工具在进程内直接执行，**没有超时**（30 秒硬超时只对 `.py` 生效）；逻辑复杂/耗时长时优先拆分
-- 名字**不能**是 `read` / `write` / `edit` / `bash`——同名会绕过内置权限链，注册表跳过并告警
+- 名字**不能**与内置 `read` / `write` / `edit` / `bash` / `browser` / `memory` / `background_task` / `mcp` / `ask_user_question` / `schedule_manager` 冲突——注册表跳过并告警
 - 需要每次都弹授权卡时，在导出对象上加 `risk: "high"`
 - 拿不到 `_caller`（身份只注入给项目内置工具），所以**依赖用户身份的工具不能放这儿**，得写进 `src/`
 
@@ -65,13 +65,15 @@ export default {
 
 ### 3. 策略授权
 
-在 `.agent/permissions.json` 中，把脚本名加进目标组的 `tools` 名单：
+在 `.agent/permissions.json` 的 `allow` 数组中添加工具名（保留现有条目）：
 
 ```json
-{ "user": { "tools": ["my-name"] } }
+{ "allow": ["Tools(my-name)"] }
 ```
 
-名单外的人无法调用（脚本不进其会话）。
+需要模型审核时，在 `ask` 数组添加 `Tools(my-name)`；需要直接禁止时，在 `deny` 数组添加它。优先级为 deny、高风险本人确认、ask、allow，未匹配默认拒绝。这里没有用户分组；只有本人能够发起操作。
+
+注册与授权各自独立：工具注册后会把名称、description 和参数 schema 提供给模型；权限配置控制执行，不负责隐藏工具或停止注册。自定义工具只扫描 `.agent/tools/` 顶层，目录不存在时可自行创建。
 
 ### 4. 收尾
 

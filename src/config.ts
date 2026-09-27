@@ -1,0 +1,202 @@
+import { logger } from "./utils/logger.ts";
+export interface FeishuPiAppConfig {
+  feishuAppId: string;
+  feishuAppSecret: string;
+  feishuOwner: string;
+  browserChannel: string;
+  allowPersonalUserCli: boolean;
+  cwd: string;
+  /** 数据根目录（data/，已被 .gitignore 排除）：非会话数据（记忆/用户/凭证/会话索引/共享缓存） */
+  dataDir: string;
+  /** 会话目录根（work_space/）：一次会话一个目录，会话产物全部在其中，按目录整目录过期清理 */
+  sessionsRoot: string;
+  /** 会话索引：conversationId → 当前会话（id/目录/Pi 会话文件） */
+  sessionsFile: string;
+  /** 消息去重表 */
+  messagesFile: string;
+  /** 本人授权（Device Flow，/login）申请的用户身份 scope */
+  userAuthScopes: string[];
+  modelProvider: string;
+  modelName: string;
+  modelBaseUrl?: string;
+  /** 可选语音转写；不配置时只读取飞书消息自带的 speech_to_text。 */
+  audioTranscriptionModel?: string;
+  audioTranscriptionBaseUrl?: string;
+  audioTranscriptionApiKey?: string;
+  /** 思考档位：off=关闭思考，low/high/max 各模型自动适配等效等级（FEISHU_PI_THINKING_LEVEL，默认 off） */
+  thinkingLevel: ThinkingLevelConfig;
+  /** 智能体审核接口（OpenAI 兼容）；未配置则ask 命中且无审核模型时弹本人卡 */
+  guardBaseUrl?: string;
+  /** 审核模型列表（多个时全部 allow 才放行，任一 confirm 即弹卡；deny 优先） */
+  guardModels: string[];
+  /** 未配置时回退主模型 Key */
+  guardApiKey?: string;
+  guardTimeoutMs: number;
+  /** 授权卡片等待本人点击的超时时间（超时视为拒绝） */
+  approvalTimeoutMs: number;
+  /** 回复卡末尾是否显示模型统计小字（模型 · token · ctx · 费用 · 耗时 · 会话别名）；工具过程状态不受影响 */
+  showModelStats: boolean;
+  /** 服务完全就绪后发给本人的私聊文本（FEISHU_PI_ONLINE_NOTICE） */
+  onlineNotice: string;
+  /** 服务收到退出信号时发给本人的私聊文本；可用 {signal} 插入信号名（FEISHU_PI_OFFLINE_NOTICE） */
+  offlineNotice: string;
+  /** 单个图片/附件允许的最大字节数 */
+  maxResourceBytes: number;
+  /** 一条消息所有图片/附件允许的最大总字节数 */
+  maxMessageResourceBytes: number;
+  /** 单个会话最多保留的在途/排队消息数 */
+  maxPendingMessages: number;
+}
+
+/** 由模型名推断供应商：带 claude → anthropic，带 deepseek → deepseek，其余 → openai。 */
+export function deriveModelProvider(modelName: string): string {
+  const n = modelName.toLowerCase();
+  if (n.includes("claude")) return "anthropic";
+  if (n.includes("deepseek")) return "deepseek";
+  return "openai";
+}
+
+/** 布尔环境变量：未配置取 fallback；显式 1/true/on/yes 视为开，其余视为关。 */
+function parseBoolEnv(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined || value.trim() === "") return fallback;
+  return ["1", "true", "on", "yes"].includes(value.trim().toLowerCase());
+}
+
+/** 生命周期通知：支持在 .env 中用字面量 `\\n` 表示换行；空值沿用默认文本。 */
+function parseNoticeEnv(value: string | undefined, fallback: string): string {
+  const parsed = value?.replaceAll("\\n", "\n").trim();
+  return parsed || fallback;
+}
+
+/** 读取正整数配置；非法值回退默认值，避免启动阶段因可选参数失败。 */
+function parsePositiveIntEnv(
+  value: string | undefined,
+  fallback: number,
+  max = Number.MAX_SAFE_INTEGER,
+): number {
+  if (value === undefined || value.trim() === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > max)
+    return fallback;
+  return parsed;
+}
+
+/** 思考档位：off=关闭思考，low/high/max 三档由各模型自动适配等效等级（pi 按模型目录夹取）。 */
+const THINKING_LEVELS = ["off", "low", "high", "max"] as const;
+export type ThinkingLevelConfig = (typeof THINKING_LEVELS)[number];
+
+/** 思考档位归一：只认 off/low/high/max；旧超集档位按服务端映射表就近折算（minimal→low；medium/xhigh→high；ultra→max），其余回退默认 off。 */
+function parseThinkingLevel(value: string | undefined): ThinkingLevelConfig {
+  const raw = (value ?? "").trim().toLowerCase();
+  if ((THINKING_LEVELS as readonly string[]).includes(raw))
+    return raw as ThinkingLevelConfig;
+  if (raw === "") return "off";
+  const equivalents: Record<string, ThinkingLevelConfig> = {
+    minimal: "low",
+    medium: "high",
+    xhigh: "high",
+    ultra: "max",
+  };
+  const folded = equivalents[raw];
+  if (folded) {
+    logger.warn(
+      `[Config] FEISHU_PI_THINKING_LEVEL="${raw}" 不是公开档位，已折算为 ${folded}`,
+    );
+    return folded;
+  }
+  logger.warn(
+    `[Config] FEISHU_PI_THINKING_LEVEL="${raw}" 无法识别（可选 off/low/high/max），已按默认 off 处理`,
+  );
+  return "off";
+}
+
+/** 从环境变量读取 mini-claw 启动配置。 */
+export function loadConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): FeishuPiAppConfig {
+  const required = (name: string): string => {
+    const value = env[name];
+    if (!value)
+      throw new Error(`Missing required environment variable: ${name}`);
+    return value;
+  };
+  // 用户身份授权（Device Flow）默认 scope：用户资料查询所需的最小集合
+  const parsedUserAuthScopes = (env.FEISHU_USER_AUTH_SCOPES ?? "")
+    .split(/[\s,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  return {
+    feishuAppId: required("FEISHU_APP_ID"),
+    feishuAppSecret: required("FEISHU_APP_SECRET"),
+    feishuOwner: env.FEISHU_PI_OWNER || env.FEISHU_PI_ADMIN || "",
+    browserChannel:
+      env.MINICLAW_BROWSER_CHANNEL ||
+      (process.platform === "win32" ? "msedge" : "chrome"),
+    allowPersonalUserCli: parseBoolEnv(env.MINICLAW_USER_CLI, false),
+    cwd: process.cwd(),
+    // 会话目录根：会话的第一句话就为它建立一个专属目录，jsonl/图片/附件全在里面
+    sessionsRoot: `${process.cwd()}/work_space`,
+    sessionsFile: `${process.cwd()}/data/sessions.json`,
+    messagesFile: `${process.cwd()}/data/messages.json`,
+    // 非会话数据（用户资料、凭证、记忆、共享缓存）统一在 data/ 下
+    dataDir: `${process.cwd()}/data`,
+    // 用户身份授权 scope（Device Flow）：默认内置"用户资料查询"所需最小集合；FEISHU_USER_AUTH_SCOPES 可覆盖。
+    // 部门路径类 scope 需要管理员审核，默认不申请；仅真实 @ 提及时自动补被提及者资料。
+    userAuthScopes:
+      parsedUserAuthScopes.length > 0
+        ? parsedUserAuthScopes
+        : [
+            "contact:contact.base:readonly",
+            "contact:user.base:readonly",
+            "contact:department.base:readonly",
+          ],
+    modelName: env.FEISHU_PI_MODEL_NAME ?? "claude-sonnet-4-6",
+    // 供应商由模型名推断：带 claude → anthropic、带 deepseek → deepseek、其余 → openai
+    // （FEISHU_PI_MODEL_PROVIDER 环境变量已移除）
+    modelProvider: deriveModelProvider(
+      env.FEISHU_PI_MODEL_NAME ?? "claude-sonnet-4-6",
+    ),
+    modelBaseUrl: env.FEISHU_PI_MODEL_BASE_URL,
+    audioTranscriptionModel: env.FEISHU_PI_STT_MODEL || undefined,
+    audioTranscriptionBaseUrl:
+      env.FEISHU_PI_STT_BASE_URL || env.FEISHU_PI_MODEL_BASE_URL,
+    audioTranscriptionApiKey:
+      env.FEISHU_PI_STT_API_KEY || env.FEISHU_PI_MODEL_API_KEY,
+    // 思考档位默认 off（关闭思考，pi 会显式发 thinking:disabled）：想开思考配 low/high/max
+    thinkingLevel: parseThinkingLevel(env.FEISHU_PI_THINKING_LEVEL),
+    // 智能体审核（策略外调用的综合判断）：OpenAI 兼容接口，支持逗号分隔多模型取安全交集
+    guardBaseUrl: env.FEISHU_GUARD_BASE_URL || undefined,
+    guardModels: (env.FEISHU_GUARD_MODELS ?? "")
+      .split(",")
+      .map((m) => m.trim())
+      .filter(Boolean),
+    guardApiKey: env.FEISHU_GUARD_API_KEY ?? env.FEISHU_PI_MODEL_API_KEY,
+    guardTimeoutMs: 6_000,
+    approvalTimeoutMs: 5 * 60_000,
+    // 回复末尾的模型统计小字：默认显示；FEISHU_SHOW_MODEL_STATS=0/false/off 关闭（工具过程状态不受影响）
+    showModelStats: parseBoolEnv(env.FEISHU_SHOW_MODEL_STATS, true),
+    onlineNotice: parseNoticeEnv(
+      env.FEISHU_PI_ONLINE_NOTICE,
+      "🟢 mini-claw 已上线，飞书通道、权限门禁和定时任务已就绪。",
+    ),
+    offlineNotice: parseNoticeEnv(
+      env.FEISHU_PI_OFFLINE_NOTICE,
+      "🔴 mini-claw 正在下线（{signal}）。",
+    ),
+    // 资源和会话背压：单位分别为 MiB、MiB、条；默认值适合个人助理，可按部署调整。
+    maxResourceBytes:
+      parsePositiveIntEnv(env.FEISHU_PI_MAX_RESOURCE_MB, 20, 1024) *
+      1024 *
+      1024,
+    maxMessageResourceBytes:
+      parsePositiveIntEnv(env.FEISHU_PI_MAX_MESSAGE_RESOURCE_MB, 40, 2048) *
+      1024 *
+      1024,
+    maxPendingMessages: parsePositiveIntEnv(
+      env.FEISHU_PI_MAX_PENDING_MESSAGES,
+      3,
+      100,
+    ),
+  };
+}

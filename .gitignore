@@ -1,0 +1,93 @@
+# 环境变量（含密钥，绝不提交）
+.env
+.env.local
+.env.*.local
+.env.*
+!.env.example
+*.vault.json
+.vault-key
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+*.so
+
+# 虚拟环境
+.venv/
+venv/
+env/
+ENV/
+
+# 数据目录（本地运行时生成）
+~/.acp-link/
+/memory/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 日志
+*.log
+logs/
+
+# 临时文件
+temp/
+tmp/
+*.tmp
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Node.js
+node_modules/
+coverage/
+test/.tmp/
+
+data/
+
+# 本地工具产物
+.claude/
+.pi/
+.agent/SYSTEM.md.bak
+
+# 会话工作区（运行时生成）
+work_space/
+
+# MiniPet stays local and is not part of this repository release.
+apps/minipet/
+tools/dev-all.mjs
+docs/minipet-integration.md
+
+# Local research and previous migration notes.
+docs/agent-comparison.md
+docs/feishu-pi-extension-plan.md
+docs/feishu-pi-to-hermes-guide.md
+docs/hermes-after-install.md
+docs/openclaw-gap-analysis.md
+docs/dsh-lark-link-review.md
+docs/issue-draft-node-sdk-card-callback.md
+docs/jev-api-tutorial.md
+
+# Browser state and captured pages can contain personal information.
+.playwright/
+.playwright-cli/

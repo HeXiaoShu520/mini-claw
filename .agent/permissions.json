@@ -1,0 +1,48 @@
+{
+  "_说明": "个人策略。deny 硬拒绝，任何模型或授权卡都不能覆盖；高风险工具必须本人确认；ask 命中才调用审核模型（allow/confirm/deny），失败回退本人确认；allow 确定性放行；其余默认拒绝。三类列表均支持 Bash/Read/Write/Tools。Tools(browser:click) 可匹配动作。后台 start 另审核 Bash(command)，MCP call 另审核 discover 返回的 permissionName。配置按 mtime 重载。命令通配门禁不等同于操作系统沙箱。",
+  "deny": [
+    "Read(**/.env)",
+    "Write(**/.env)",
+    "Bash(**.env**)",
+    "Read(**/.env.*)",
+    "Write(**/.env.*)",
+    "Read(data/credentials/**)",
+    "Write(data/credentials/**)",
+    "Bash(**data/credentials/**)",
+    "Read(data/.vault-key)",
+    "Write(data/.vault-key)",
+    "Bash(**.vault-key**)",
+    "Read(data/browser/profile/**)",
+    "Write(data/browser/profile/**)",
+    "Bash(**data/browser/profile/**)"
+  ],
+  "ask": [
+    "Bash(*)",
+    "Write(**)",
+    "Tools(browser:click)",
+    "Tools(browser:dblclick)",
+    "Tools(browser:fill)",
+    "Tools(browser:type)",
+    "Tools(browser:press)",
+    "Tools(browser:select)",
+    "Tools(browser:check)",
+    "Tools(browser:uncheck)",
+    "Tools(browser:upload)",
+    "Tools(browser:dialog-accept)",
+    "Tools(memory:rewrite)",
+    "Tools(mcp__*)",
+    "Tools(mcp:read_resource)",
+    "Tools(mcp:get_prompt)",
+    "Tools(schedule_manager:add)",
+    "Tools(schedule_manager:run)"
+  ],
+  "allow": [
+    "Read(**)",
+    "Tools(memory)",
+    "Tools(ask_user_question)",
+    "Tools(browser)",
+    "Tools(background_task)",
+    "Tools(mcp)",
+    "Tools(schedule_manager)"
+  ]
+}

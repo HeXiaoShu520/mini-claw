@@ -252,7 +252,7 @@ export class HelpCommand implements CommandHandler {
       card: markdownCard(`**可用指令**
 
 \`/model\` - 查看并切换 AI 模型（仅本人）
-\`/login\` - 登录飞书用户身份（Device Flow 授权，用于"我的视角"能力）
+\`/login\` - 主动授权飞书账号（用于自动查询 @ 提及者资料）
 \`/logout\` - 退出用户身份登录
 \`/help\` - 显示此帮助信息
 \`/new\` - 开始新会话（换新的会话 id 与会话目录）

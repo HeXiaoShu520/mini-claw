@@ -33,9 +33,15 @@ flowchart TD
 | `memory/index.ts` | 来源签名、增量更新、关键词评分、日期筛选、记录 ID |
 | `tasks/service.ts` | 进程树、凭证代理租约、超时、限流、日志、任务记录、通知 |
 | `mcp/service.ts` | 按需连接、发现、调用、配置过滤、取消、断线回收 |
+| `resources/` | 资源选择配置、Pi 发现适配、一次加载的资源快照 |
+| `tools/` | Tool 模块发现/校验、业务函数与独立 TS 脚本适配 |
 | `process/` | 系统环境白名单、直接 argv 执行、进程树终止 |
 | `permission/` | 个人规则解析、匹配和 mtime 缓存 |
 | `guard/` | 确定性判定、ask 模型审核、本人确认卡 |
+
+## 扩展资源
+
+Skill、Tool 与 MCP 的边界和开发方法见 [扩展教程](extensions.md)。Skill/Tool 选择进入模型的资源，执行授权仍统一走 ToolGuard；MCP 连接由 McpService 按需持有，不由 Skill 负责生命周期。
 
 ## 身份
 

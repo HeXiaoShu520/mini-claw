@@ -12,6 +12,7 @@ import { matchGlobs } from "../utils/path-glob.ts";
 import { loadMcpConfig, type McpServerConfig } from "./config.ts";
 import { mcpToolName } from "./names.ts";
 import { logger } from "../utils/logger.ts";
+import { collectPages } from "./pagination.ts";
 
 interface McpConnection {
   client: Client;
@@ -44,13 +45,16 @@ export class McpService {
 
   async tools(server: string, signal?: AbortSignal) {
     const connection = await this.connection(server, signal);
-    connection.tools = (
-      await connection.client.listTools(undefined, {
-        signal,
-        timeout: connection.config.timeoutMs,
-        cacheMode: "refresh",
-      })
-    ).tools;
+    connection.tools = await collectPages(
+      (cursor) =>
+        connection.client.listTools(cursor ? { cursor } : undefined, {
+          signal,
+          timeout: connection.config.timeoutMs,
+          cacheMode: "refresh",
+        }),
+      (page) => page.tools,
+      signal,
+    );
     return connection.tools
       .filter((tool) => this.toolAllowed(connection.config, tool.name))
       .map((tool) => ({
@@ -87,10 +91,31 @@ export class McpService {
 
   async resources(server: string, signal?: AbortSignal) {
     const { client, config } = await this.connection(server, signal);
-    return client.listResources(undefined, {
-      signal,
-      timeout: config.timeoutMs,
-    });
+    return {
+      resources: await collectPages(
+        (cursor) =>
+          client.listResources(cursor ? { cursor } : undefined, {
+            signal,
+            timeout: config.timeoutMs,
+          }),
+        (page) => page.resources,
+        signal,
+      ),
+    };
+  }
+  async resourceTemplates(server: string, signal?: AbortSignal) {
+    const { client, config } = await this.connection(server, signal);
+    return {
+      resourceTemplates: await collectPages(
+        (cursor) =>
+          client.listResourceTemplates(cursor ? { cursor } : undefined, {
+            signal,
+            timeout: config.timeoutMs,
+          }),
+        (page) => page.resourceTemplates,
+        signal,
+      ),
+    };
   }
   async readResource(server: string, uri: string, signal?: AbortSignal) {
     const { client, config } = await this.connection(server, signal);
@@ -98,7 +123,17 @@ export class McpService {
   }
   async prompts(server: string, signal?: AbortSignal) {
     const { client, config } = await this.connection(server, signal);
-    return client.listPrompts(undefined, { signal, timeout: config.timeoutMs });
+    return {
+      prompts: await collectPages(
+        (cursor) =>
+          client.listPrompts(cursor ? { cursor } : undefined, {
+            signal,
+            timeout: config.timeoutMs,
+          }),
+        (page) => page.prompts,
+        signal,
+      ),
+    };
   }
   async prompt(
     server: string,

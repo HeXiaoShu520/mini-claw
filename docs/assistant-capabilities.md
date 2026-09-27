@@ -8,6 +8,7 @@
 | `MINICLAW_BROWSER_CHANNEL` | Windows 默认 msedge；其他平台默认 chrome |
 | `FEISHU_GUARD_BASE_URL / MODELS / API_KEY` | ask 审核接口；未配置时本人确认 |
 | `.agent/permissions.json` | deny / ask / allow，mtime 重载 |
+| `.agent/resources.json` | Skill/自定义 Tool 启停、名称筛选及 Skill 额外路径，重启生效 |
 | `.agent/mcp.json` | MCP 服务；使用时读取，变更后重新连接 |
 
 旧模型、飞书应用和资源上限的 `FEISHU_PI_*` 配置仍可继续使用，详见 `.env.example`。MiniPet 及其桥接代码暂不包含在新仓库中。
@@ -116,6 +117,7 @@ read 查看长期记忆；rewrite 整理整份内容，原版先归档；sync �
 {"action":"discover","server":"files"}
 {"action":"call","server":"files","tool":"发现结果中的原始工具名","args":{}}
 {"action":"resources","server":"files"}
+{"action":"resource_templates","server":"files"}
 {"action":"read_resource","server":"files","uri":"服务返回的 URI"}
 {"action":"prompts","server":"files"}
 {"action":"get_prompt","server":"files","prompt":"服务返回的提示名","args":{}}
@@ -130,8 +132,16 @@ include/exclude 匹配服务原始工具名，exclude 优先；禁止的工具�
 
 实现：`src/mcp/config.ts` 解析配置，`service.ts` 管理连接，`tool.ts` 适配结果，`names.ts` 生成稳定权限名。参考：[官方 TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)。
 
+## Skill 与自定义 Tool
+
+Skill 使用 `.agent/skills/name/SKILL.md` 或顶层 md。Tool 使用 `.agent/tools/name.ts` 或目录的 index.ts；只扫描入口，辅助业务模块不注册。支持 TS/JS/MJS 和独立 TS 脚本，工具定义错误、名称重复或与内置冲突会明确报错。
+
+注册选择在 resources.json，执行授权在 permissions.json。`npm run resources` 查看资源，`npm run check` 包括自定义 TS 工具。完整教程与可用示例见 [扩展](extensions.md)。
+
 ## 后续扩展约定
 
 给新能力写独立服务，再写 Pi 工具适配；通过 AssistantServices/main 注入依赖和生命周期。复用 CLI 时使用直接 argv，明确环境变量来源、输出大小、取消和超时。新增嵌套执行器时，把底层能力投影到 ToolGuard，避免通用工具成为权限旁路。
 
 技能可以编排这些工具；进程、凭证、索引和连接的状态由服务层持有。工具使用时机写在 description，恒真行为约束写在 SYSTEM.md。
+
+个人助理下一步能力的优先级与难度见 [OpenClaw 对齐路线](openclaw-alignment.md)。

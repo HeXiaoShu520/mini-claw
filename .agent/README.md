@@ -5,8 +5,9 @@
 | 位置 | 用途 |
 |---|---|
 | `SYSTEM.md` | 身份、口吻、与具体工具无关的行为约束 |
-| `skills/` | 技能说明，由 Pi 发现 |
-| `tools/` | 本工程的 TS/JS/Python 自定义工具 |
+| `skills/` | 目录式 SKILL.md 或顶层 md，由 Pi 发现；外部来源须在 resources.json 显式添加 |
+| `tools/` | TS/JS/MJS 工具入口；可封装独立 TS 脚本 |
+| `resources.json` | Skill/自定义 Tool 的启停、include/exclude；Skill 额外路径 |
 | `permissions.json` | 个人 `deny / ask / allow` 策略 |
 | `mcp.json` | MCP 服务配置；默认没有服务 |
 | `extensions/`、`prompts/`、`themes/` | Pi 原生扩展槽位 |
@@ -32,4 +33,6 @@
 
 运行时加载后缓存技能和自定义工具，修改后重启。权限文件每次调用检查 mtime；MCP 配置在使用时读取，变化后重新连接。MCP 配置中的密钥使用 `${ENV_NAME}` 引用，不写明文。
 
-更多示例见 [能力与配置](../docs/assistant-capabilities.md)。
+新增工具不会自动放行，需配置 Tools(name)。工具入口缺失、schema 无效、名称冲突会中止启动并报错。`npm run resources` 查看实际资源，不连接 MCP；`npm run check` 也检查 `.agent/tools` 中的 TS。
+
+完整教程与可用示例见 [扩展教程](../docs/extensions.md)。

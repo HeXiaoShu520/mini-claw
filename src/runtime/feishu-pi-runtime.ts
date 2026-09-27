@@ -2,7 +2,7 @@ import {
   createAgentSession,
   SessionManager,
   type AgentSession,
-  DefaultResourceLoader,
+  type DefaultResourceLoader,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -21,11 +21,8 @@ import type {
   FeishuPiTool,
 } from "./types.ts";
 import type { FeishuContext } from "../context/types.ts";
-import {
-  DEFAULT_BUILTIN_TOOLS,
-  createToolRegistryAsync,
-} from "../tools/registry.ts";
-import { resolve, sep } from "node:path";
+import { DEFAULT_BUILTIN_TOOLS } from "../tools/registry.ts";
+import { AgentResources } from "../resources/catalog.ts";
 import { logger, colors } from "../utils/logger.ts";
 import { createScheduleManagerTool } from "../schedule/tool.ts";
 import type { ToolPolicy } from "../permission/policy.ts";
@@ -173,8 +170,8 @@ function messageText(content: unknown): string {
 }
 
 /**
- * 技能文档对所有用户开放，不做权限过滤（技能是说明书而非能力，
- * 能力边界在工具注册层的组过滤与 ToolGuard）。资源加载直接使用 Pi 的基础实现。
+ * Skill 是流程说明；资源目录负责发现与启停，ToolGuard 负责执行授权。
+ * Skill 解析和按需读取沿用 Pi 原生实现。
  */
 
 /**
@@ -227,10 +224,12 @@ export function stripVolatileContent<T>(message: T): T {
 export class FeishuPiRuntime {
   private readonly config: FeishuPiConfig;
   private readonly tools: FeishuPiTool[];
+  private readonly resources: AgentResources;
 
   constructor(config: FeishuPiConfig, tools: FeishuPiTool[] = []) {
     this.config = config;
     this.tools = tools;
+    this.resources = new AgentResources(config.cwd);
   }
 
   /**
@@ -245,41 +244,8 @@ export class FeishuPiRuntime {
     );
   }
 
-  /** 基础 ResourceLoader：进程内只创建一次（Skills 上电加载，各会话复用同一实例）。 */
-  private loadBaseLoaderOnce(): Promise<DefaultResourceLoader> {
-    this.baseLoaderOnce ??= this.createBaseLoader();
-    return this.baseLoaderOnce;
-  }
-
-  /** 创建并 reload 基础 ResourceLoader（必须 reload 后才能加载 skills）。 */
-  private async createBaseLoader(): Promise<DefaultResourceLoader> {
-    // 系统提示不在这里传：Pi 会自动发现 <agentDir>/SYSTEM.md（即 .agent/SYSTEM.md）作为系统提示本体，
-    // 并把项目上下文（AGENTS.md 等）追加到系统提示末尾——全部由 Pi 原生加载，本工程不自写加载逻辑。
-    const loader = new DefaultResourceLoader({
-      cwd: this.config.cwd,
-      agentDir: `${this.config.cwd}/.agent`,
-      // 项目上下文白名单：只接受本工程目录内的文件。
-      // Pi 默认会从 cwd 一路向上遍历到盘根收集 AGENTS.md / CLAUDE.md，且不经任何信任检查——
-      // 也就是说任何祖先目录（含盘根）放一个 AGENTS.md 都能进入系统提示，构成外部可控的提示注入面。
-      // 这里用 Pi 提供的过滤钩子做准入（加载仍是 Pi 原生行为，本工程只做筛选），丢弃项打日志，不静默。
-      agentsFilesOverride: ({ agentsFiles }) => {
-        const root = resolve(this.config.cwd) + sep;
-        const kept = agentsFiles.filter((file) =>
-          resolve(file.path).startsWith(root),
-        );
-        const dropped = agentsFiles.filter(
-          (file) => !resolve(file.path).startsWith(root),
-        );
-        if (dropped.length > 0) {
-          logger.warn(
-            `[Runtime] 已忽略工程外的项目上下文文件: ${dropped.map((file) => file.path).join("、")}`,
-          );
-        }
-        return { agentsFiles: kept };
-      },
-    });
-    await loader.reload();
-    return loader;
+  private async loadBaseLoaderOnce(): Promise<DefaultResourceLoader> {
+    return (await this.resources.load()).loader;
   }
 
   /**
@@ -323,22 +289,16 @@ export class FeishuPiRuntime {
       );
     }
 
-    // 自定义 Tools：Skills 之后加载，逐行打印（与 Skills 同款格式；描述超长截断）
-    let customTools: FeishuPiTool[] = [];
-    try {
-      customTools = await this.loadCustomToolsOnce();
-    } catch (error) {
-      logger.warn(
-        "[Runtime] 自定义 Tools 加载失败（不影响启动，下个会话重试）:",
-        error,
-      );
-    }
+    // 自定义工具已在 preload 校验；错误会中止启动，不能静默缺失。
+    const customTools = await this.loadCustomToolsOnce();
     if (customTools.length > 0) {
       logger.info(
         `[Runtime] 已加载 ${colors.bright}${colors.cyan}${customTools.length}${colors.reset} 个 Tools`,
       );
     } else {
-      logger.info(`[Runtime] 未找到自定义 Tools（.agent/tools/ 为空）`);
+      logger.info(
+        `[Runtime] 没有启用的自定义 Tools（见 .agent/resources.json）`,
+      );
     }
 
     // 当前模型的名字与解析后的使用配置（协议/地址/上下文/视觉/思维链/计价/密钥变量）
@@ -374,28 +334,13 @@ export class FeishuPiRuntime {
     );
   }
 
-  /** 自定义工具全集：进程内只扫描/导入一次，各会话复用同一份定义（失败可重试） */
-  private customToolsOnce?: Promise<FeishuPiTool[]>;
-  /** 基础资源加载器（Skills 等）：进程内只创建/reload 一次，各会话复用 */
-  private baseLoaderOnce?: Promise<DefaultResourceLoader>;
-
-  private loadCustomToolsOnce(): Promise<FeishuPiTool[]> {
-    this.customToolsOnce ??= createToolRegistryAsync(this.config.cwd)
-      .then((defs) =>
-        defs.map((def) => ({
-          name: def.name,
-          label: def.label ?? def.name,
-          description: def.description,
-          parameters: def.parameters,
-          execute: def.execute.bind(def) as FeishuPiTool["execute"],
-          risk: (def as RiskyToolDefinition).risk,
-        })),
-      )
-      .catch((error) => {
-        this.customToolsOnce = undefined; // 失败不缓存，下个会话重试
-        throw error;
-      });
-    return this.customToolsOnce;
+  private async loadCustomToolsOnce(): Promise<FeishuPiTool[]> {
+    const { tools } = await this.resources.load();
+    return tools.map((tool) => ({
+      ...tool,
+      execute: tool.execute.bind(tool) as FeishuPiTool["execute"],
+      risk: (tool as RiskyToolDefinition).risk,
+    }));
   }
 
   /** 上电预加载：权限策略 + Skills + 自定义工具在启动时全部就绪，首条消息零初始化日志。 */

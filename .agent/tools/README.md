@@ -1,45 +1,31 @@
 # 自定义 Tool
 
-把自己编写的工具放在本目录顶层，例如 `.agent/tools/my_tool.ts`。加载器支持 `.ts`、`.js`、`.py`，不递归扫描子目录；这个 README 不会注册为工具。
+入口支持 `.ts`、`.js`、`.mjs`：
 
-TS/JS 文件导出工具对象，推荐 `export default`：
-
-```ts
-export default {
-  name: "my_tool",
-  label: "我的工具",
-  description: "说明工具的用途、何时使用、参数含义及结果处理要求。",
-  parameters: {
-    type: "object",
-    properties: {
-      target: { type: "string", description: "处理目标" },
-    },
-    required: ["target"],
-  },
-  execute: async (_toolCallId, params, signal) => {
-    signal?.throwIfAborted();
-    const { target } = params;
-    // 在这里调用实际业务逻辑；失败直接 throw。
-    return {
-      content: [{ type: "text", text: `收到目标：${target}` }],
-      details: {},
-    };
-  },
-};
+```text
+.agent/tools/
+  local-time.ts
+  json-format/
+    index.ts     # 唯一入口
+    run.ts       # 独立脚本，不自动注册
+    service.ts   # 业务实现，不自动注册
 ```
 
-这段代码是结构示例，没有实现具体业务。Python 工具的元数据和输入输出约定见 [工具编写指南](../skills/skill-to-tool.md)。
+导出 default、tool 或 tools，内容为工具对象或数组。工具必须有唯一 name、description、object JSON Schema 和 execute。工具名与内置能力冲突、重复、缺少导出或 schema 无效都会明确中止启动。
 
-## 授权和生效
+## 推荐写法
 
-- 将 `Tools(my_tool)` 添加到 `../permissions.json` 的 `allow` 数组可直接放行，添加到 `ask` 数组会进入模型审核，添加到 `deny` 数组会直接拒绝。保留现有条目。
-- 工具对象可声明 `risk: "high"`，每次都需要本人确认；该标记不能覆盖 deny。
-- 工具名不能与 `read/write/edit/bash/browser/memory/background_task/mcp/ask_user_question/schedule_manager` 冲突。
-- 新增或修改工具文件后重启进程；只新建会话不足以重新加载。
-- `description` 和 `parameters` 会随工具注册提供给模型；权限配置控制执行，不控制注册或隐藏。
+- 进程内逻辑用 `src/tools/sdk.ts` 的 defineTool，返回字符串或 JSON。
+- 独立 TS 脚本用 `src/tools/script-tool.ts` 的 defineScriptTool，JSON stdin、文本/JSON stdout，支持取消、超时、输出限制及进程树回收。
+- 图片和增量输出直接导出原生 Pi ToolDefinition。
+- 旧 `.py` 元数据工具不再自动注册；Python 业务可以通过 TS 入口调用 runProcess。
 
-## MCP
+完整可用示例在 [examples/tools](../../examples/tools)。复制到本目录后，在 `../resources.json` 选择注册，在 `../permissions.json` 配置 Tools(name) 的 allow/ask/deny；注册不会自动授权。
 
-`../mcp.json` 保存外部 MCP 服务的启动命令、地址和连接参数。MCP 服务提供的工具通过内置 `mcp` 工具按需发现和调用，不需要复制到本目录。当前 `mcpServers: {}` 表示没有配置外部服务。
+工具用法与调用时机写在 description，SYSTEM.md 保留与工具无关的约束。模块导入阶段只定义对象；进程、索引和连接状态应放在服务层。
 
-完整配置见 [能力与配置](../../docs/assistant-capabilities.md)。
+`npm run resources` 查看发现结果，`npm run check` 检查 TS。资源修改后重启，只有权限规则修改支持即时生效。
+
+MCP 外部服务配置在 `../mcp.json`，不需要复制其工具到这个目录。
+
+详细教程：[Skill、Tool 与 MCP](../../docs/extensions.md)。

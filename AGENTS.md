@@ -9,6 +9,7 @@
 - 类型检查：`npm run check`
 - 测试：`npm test`（vitest）
 - 初始化向导：`npm run setup`
+- 资源清单：`npm run resources`（不连接飞书/MCP）
 
 ## 目录结构
 
@@ -24,11 +25,15 @@
   - `tasks/` 后台进程、任务记录、日志与工具适配
   - `mcp/` 配置、按需连接、工具/资源/提示调用
   - `process/` 子进程环境、执行与进程树回收
+  - `resources/` 扩展选择配置、Pi 资源适配与资源快照
+  - `tools/` 本地工具发现/校验、简化 SDK 与独立脚本适配
 - `.agent/` — Agent 配置目录（详见 `.agent/README.md`）
   - `SYSTEM.md` 系统提示 / 人格（pi 原生发现，本仓库的 agentDir 指向此目录）
   - `skills/` 技能（pi 原生约定）
   - `permissions.json` 权限策略（本工程自研）
   - `tools/` 自定义工具（本工程自研）
+  - `resources.json` Skill/自定义 Tool 的注册选择（执行授权另走 permissions.json）
+  - `mcp.json` 外部 MCP 服务配置（按需连接）
 - `data/` — 非会话运行时数据（记忆、用户、凭证、会话索引、共享缓存），已被 `.gitignore` 排除
 - `work_space/` — 会话目录根：一次会话一个目录（`{sessionId}/`），jsonl、图片、附件、OCR 过程文件全在里面
 - `docs/` — 架构与命令文档：`architecture.md`、`commands.md`
@@ -44,6 +49,9 @@
 - 权限是 **fail-safe**：`permissions.json` 未明确放行的调用一律拦截，规则写错的表现是"工具全不可用"而不是"全部放行"。
 - 权限顺序：deny 硬拒绝 → 高风险本人确认 → ask 审核模型 → allow 放行 → 默认拒绝。ask 才调用模型，审核失败回退本人确认。后台命令和 MCP 具体工具另行审核，不能借通用工具名绕过规则。
 - 服务层不依赖飞书和 Pi；工具适配层不持有进程、凭证或索引的生命周期。`main.ts` 负责装配与退出回收。
+- Skill 解析使用 Pi 原生实现；工具只扫描顶层 TS/JS/MJS 与子目录 index 入口，不扫描业务辅助文件。工具导出与 schema 校验失败、重复名称或内置名称冲突会明确中止启动；不静默跳过。
+- Skill 默认只发现 `.agent/skills`，外部来源须在 resources.json 的 skills.paths 显式加入；不自动读入电脑全局 `.agents/skills`。
+- 独立脚本用 `defineScriptTool`，参数走 JSON stdin；业务 stdout、诊断 stderr，非零退出码 throw。子进程复用 process/ 的环境、取消、超时和进程树回收，不另造一套执行器。
 - 浏览器、MCP、记忆索引按需启动；不添加默认心跳、自我学习或后台模型轮询。
 - 思考档位支持 `off` / `low` / `high` / `max`，默认 `off`；旧档位 minimal/medium/xhigh/ultra 会告警并折算，未知值告警后回退 `off`。
 - `.gitignore` 忽略了 `.pi/`，配置不要放到 `.pi/`（会被静默排除出版本库）。

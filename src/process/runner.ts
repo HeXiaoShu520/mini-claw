@@ -15,6 +15,8 @@ export interface RunOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   maxChars?: number;
+  /** Stdin payload is data and never interpreted by a shell. */
+  input?: string;
 }
 
 /** Direct argv execution; shell metacharacters in user parameters are never interpreted. */
@@ -29,7 +31,7 @@ export async function runProcess(
     env: options.env ?? processEnvironment(),
     windowsHide: true,
     detached: process.platform !== "win32",
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
   });
   const max = options.maxChars ?? 20_000;
   let stdout = "",
@@ -56,8 +58,12 @@ export async function runProcess(
       }
     }
   };
-  child.stdout.on("data", (chunk: Buffer) => capture("stdout", chunk));
-  child.stderr.on("data", (chunk: Buffer) => capture("stderr", chunk));
+  child.stdout!.on("data", (chunk: Buffer) => capture("stdout", chunk));
+  child.stderr!.on("data", (chunk: Buffer) => capture("stderr", chunk));
+  if (options.input !== undefined) {
+    child.stdin!.on("error", () => {}); // A script may exit before reading stdin (EPIPE).
+    child.stdin!.end(options.input);
+  }
   const abort = () => {
     cancelled = true;
     void stopProcess(child);

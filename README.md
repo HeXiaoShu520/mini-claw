@@ -6,7 +6,7 @@
 
 ## 开始使用
 
-需要 Node.js 22+、npm、可用的模型接口，以及自己的飞书机器人。浏览器默认复用 Windows 上已安装的 Edge；可改为 Chrome。Python 仅在使用 Python 自定义工具时需要。
+需要 Node.js 22+、npm、可用的模型接口，以及自己的飞书机器人。浏览器默认复用 Windows 上已安装的 Edge；可改为 Chrome。本地工具和独立脚本优先使用 TS/JS。
 
 ```sh
 npm ci
@@ -42,10 +42,10 @@ npm start
 | 浏览器 | 按需启动 Playwright CLI，持久化独立登录状态，页面快照、点击、输入、上传、截图和人工接管 |
 | 记忆 | 一份个人 Markdown 记忆；按需增量索引，关键词、时间过滤、跨会话检索和原文读取 |
 | 后台任务 | 启动、状态、日志、取消、超时、并发限制、持久化记录和完成通知 |
-| MCP | 按需连接 stdio / Streamable HTTP / 显式 legacy SSE；工具发现与调用、资源和提示读取 |
+| MCP | 按需连接 stdio / Streamable HTTP / 显式 legacy SSE；分页发现工具、资源/模板和提示 |
 | 飞书 | 文本、图片、飞书自带语音转写、附件、引用、CardKit 2.0 流式回复、人物提及与本人授权 |
 | 定时任务 | 一次性、固定间隔、cron、时区、启停和手动执行 |
-| 扩展 | Markdown 技能，TS/JS/Python 工具和 Pi 扩展 |
+| 扩展 | 目录式 SKILL.md、TS/JS/MJS 工具、独立 TS 脚本和 Pi 原生扩展 |
 
 没有默认模型心跳、自动自我学习或后台记忆总结。浏览器和 MCP 未使用时不启动；记忆索引在查询时更新。只有你明确创建的定时任务会定期启动 Agent。
 
@@ -80,6 +80,7 @@ npm start
 ```sh
 npm run dev
 npm run check
+npm run resources
 npm test
 ```
 
@@ -93,8 +94,11 @@ npm test
 | `src/memory/` | 记忆存储、历史索引和工具适配 |
 | `src/tasks/`、`src/process/` | 后台任务、子进程和回收 |
 | `src/mcp/` | MCP 配置、连接和工具适配 |
+| `src/resources/`、`src/tools/` | 扩展选择、资源快照、工具定义与脚本适配 |
 | `.agent/` | 系统提示、技能、权限、自定义工具、MCP 配置 |
 
 依赖版本由 `package-lock.json` 固定，安装使用 `npm ci`。运行数据、会话、浏览器状态、密钥和本机 MiniPet 应用不入库。
 
-文档：[能力与配置](docs/assistant-capabilities.md) · [架构](docs/architecture.md) · [命令](docs/commands.md) · [账号授权](docs/user-auth.md) · [数据](docs/data-management.md) · [工具扩展](.agent/README.md)。
+扩展配置：`.agent/resources.json` 选择 Skill 和自定义 Tool，`.agent/permissions.json` 决定执行授权，`.agent/mcp.json` 配置外部 MCP 服务。可用工具示例放在 `examples/tools/`，不自动注册。
+
+文档：[能力与配置](docs/assistant-capabilities.md) · [架构](docs/architecture.md) · [命令](docs/commands.md) · [账号授权](docs/user-auth.md) · [数据](docs/data-management.md) · [扩展教程](docs/extensions.md) · [OpenClaw 对齐路线](docs/openclaw-alignment.md)。

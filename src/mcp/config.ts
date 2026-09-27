@@ -25,7 +25,10 @@ export async function loadMcpConfig(
       throw error;
     },
   );
-  const raw = JSON.parse(source) as {
+  const parsed: unknown = JSON.parse(source);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    throw new Error("mcp.json 必须是对象");
+  const raw = parsed as {
     mcpServers?: Record<string, Record<string, unknown>>;
   };
   const result = new Map<string, McpServerConfig>();
@@ -41,8 +44,13 @@ export async function loadMcpConfig(
       throw new Error(`MCP 服务名无效: ${name}`);
     if (!input || typeof input !== "object" || Array.isArray(input))
       throw new Error(`MCP 配置无效: ${name}`);
+    if (input.enabled !== undefined && typeof input.enabled !== "boolean")
+      throw new Error(`MCP enabled 必须是布尔值: ${name}`);
     if (input.enabled === false) continue;
-    const transport = input.transport ?? (input.command ? "stdio" : "http");
+    const configuredTransport =
+      input.transport ?? input.type ?? (input.command ? "stdio" : "http");
+    const transport =
+      configuredTransport === "streamable-http" ? "http" : configuredTransport;
     if (!["stdio", "http", "sse"].includes(String(transport)))
       throw new Error(`MCP transport 无效: ${name}`);
     const command =

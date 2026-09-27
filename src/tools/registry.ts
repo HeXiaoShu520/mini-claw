@@ -1,65 +1,13 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { readFileSync, readdirSync, existsSync } from "node:fs";
-import { execFile, execFileSync } from "node:child_process";
-import { join, extname } from "node:path";
-import { pathToFileURL } from "node:url";
-import { logger } from "../utils/logger.ts";
+import { readdir } from "node:fs/promises";
+import { extname, join } from "node:path";
+import {
+  resourceEnabled,
+  type ResourceSelection,
+} from "../resources/config.ts";
+import { loadToolModule } from "./module-loader.ts";
 
 export const DEFAULT_BUILTIN_TOOLS = ["read", "write", "edit", "bash"] as const;
-
-interface PythonToolMeta {
-  name: string;
-  description: string;
-  parameters?: Record<string, unknown>;
-  risk?: "high";
-}
-
-// ---------- Python 检测与元数据解析 ----------
-
-let _pythonCmd: string | null = null;
-
-/** 探测可用的 Python 命令并缓存 */
-function detectPython(): string {
-  if (_pythonCmd) return _pythonCmd;
-  const candidates =
-    process.platform === "win32"
-      ? ["python", "py", "python3"]
-      : ["python3", "python"];
-  for (const cmd of candidates) {
-    try {
-      execFileSync(cmd, ["--version"], { stdio: "pipe", windowsHide: true });
-      _pythonCmd = cmd;
-      return cmd;
-    } catch {
-      continue;
-    }
-  }
-  _pythonCmd = "python";
-  logger.warn("[Registry] 未检测到 Python，尝试默认 python 命令");
-  return _pythonCmd;
-}
-
-/** 从 Python 脚本第一行 #! {...} 解析元数据 */
-function readPythonMeta(filePath: string): PythonToolMeta | null {
-  const content = readFileSync(filePath, "utf-8");
-  const lines = content.split("\n");
-  for (const line of lines) {
-    const trimmed = line.trim();
-    const match = trimmed.match(/^#!\s*(\{.*\})\s*$/);
-    if (match) {
-      try {
-        return JSON.parse(match[1]) as PythonToolMeta;
-      } catch {
-        logger.warn(`[Registry] Python 脚本元数据解析失败: ${filePath}`);
-        return null;
-      }
-    }
-  }
-  logger.warn(`[Registry] Python 脚本缺少元数据头: ${filePath}`);
-  return null;
-}
-
-/** 自定义工具不得占用的内置工具名：同名会覆盖内置实现，绕过对应的 Guard 链（如 read 的可读范围判定） */
 const RESERVED_TOOL_NAMES = new Set<string>([
   ...DEFAULT_BUILTIN_TOOLS,
   "browser",
@@ -69,154 +17,59 @@ const RESERVED_TOOL_NAMES = new Set<string>([
   "ask_user_question",
   "schedule_manager",
 ]);
+const MODULE_EXTENSIONS = new Set([".ts", ".js", ".mjs"]);
 
-/** 内置同名工具拒绝登记；返回 undefined 表示应跳过该工具 */
-function checkReservedName(name: string, file: string): boolean {
-  if (!RESERVED_TOOL_NAMES.has(name)) return true;
-  logger.warn(
-    `[Registry] 跳过 ${file}：自定义工具名「${name}」与内置工具冲突（会绕过对应权限链）`,
+/** Folders contribute only index modules; implementation helpers are never scanned recursively. */
+async function toolFiles(dir: string): Promise<string[]> {
+  const entries = await readdir(dir, { withFileTypes: true }).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    },
   );
-  return false;
-}
-
-// ---------- 加载器 ----------
-
-/** 上一次加载的自定义工具签名：用于"仅在首次/工具集变化时打日志" */
-let _lastToolSignature: string | null = null;
-
-/**
- * 加载 .agent/tools/ 下的自定义工具（只扫顶层，子目录不认）。
- * - .ts / .js 文件：通过 import() 动态加载，取 default 或首个含 name+execute 的导出；
- *   找不到合法导出时**静默跳过**（不打日志、不报错），写完务必确认启动日志里的 Tools 计数
- * - .py 文件：通过第一行 #! {...} 元数据注册，执行时 spawn python 子进程（缺元数据会告警）
- *
- * 调用方注意：Runtime 用 customToolsOnce 在进程内缓存本函数结果（见 feishu-pi-runtime.ts），
- * 因此实际只在启动时加载一次——**改 .agent/tools/ 必须重启进程**，没有热更新。
- * 下面的签名比对只在重复调用的场景下起作用，避免同一工具集重复刷日志。
- */
-async function loadCustomTools(cwd: string): Promise<ToolDefinition[]> {
-  const toolsDir = join(cwd, ".agent/tools");
-  if (!existsSync(toolsDir)) return [];
-
-  const tools: ToolDefinition[] = [];
-  const entries: Array<{ name: string; file: string }> = [];
-  const files = readdirSync(toolsDir).filter((f) => {
-    const ext = extname(f).toLowerCase();
-    return ext === ".ts" || ext === ".js" || ext === ".py";
-  });
-
-  for (const file of files) {
-    const filePath = join(toolsDir, file);
-    const ext = extname(file).toLowerCase();
-
-    try {
-      if (ext === ".py") {
-        // ---- Python 脚本工具 ----
-        const meta = readPythonMeta(filePath);
-        if (!meta) continue;
-        if (!checkReservedName(meta.name, filePath)) continue;
-
-        const pythonCmd = detectPython();
-        tools.push({
-          name: meta.name,
-          label: meta.name,
-          description: meta.description,
-          parameters: meta.parameters ?? { type: "object", properties: {} },
-          ...(meta.risk === "high" ? { risk: "high" as const } : {}),
-          execute: async (_id, params, _signal, _onUpdate, _ctx) => {
-            return new Promise((resolve) => {
-              const child = execFile(
-                pythonCmd,
-                [filePath],
-                {
-                  maxBuffer: 10 * 1024 * 1024,
-                  timeout: 30_000,
-                  windowsHide: true,
-                  cwd,
-                  signal: _signal,
-                },
-                (error, stdout, stderr) => {
-                  if (error) {
-                    resolve({
-                      content: [
-                        {
-                          type: "text" as const,
-                          text: stderr
-                            ? `工具执行失败: ${stderr}`
-                            : `工具执行失败(${error.code || "unknown"}): ${error.message}`,
-                        },
-                      ],
-                      details: {},
-                    });
-                    return;
-                  }
-                  try {
-                    resolve(JSON.parse(stdout));
-                  } catch {
-                    resolve({
-                      content: [{ type: "text" as const, text: stdout }],
-                      details: {},
-                    });
-                  }
-                },
-              );
-              // Python 脚本未读 stdin 就退出时 end() 会触发 EPIPE，
-              // 不挂 error 监听会以 uncaught exception 冒泡并崩掉整个进程
-              child.stdin!.on("error", () => {});
-              child.stdin!.end(JSON.stringify(params ?? {}));
-            });
-          },
-        });
-        entries.push({ name: meta.name, file });
-      } else {
-        // ---- TS / JS 脚本工具 ----
-        const module = await import(pathToFileURL(filePath).href);
-        const tool =
-          module.default ??
-          Object.values(module).find(
-            (exp) =>
-              (exp as ToolDefinition | undefined)?.name &&
-              (exp as ToolDefinition | undefined)?.execute,
-          );
-
-        if (
-          tool &&
-          typeof tool === "object" &&
-          "name" in tool &&
-          "execute" in tool &&
-          checkReservedName((tool as ToolDefinition).name, filePath)
-        ) {
-          tools.push(tool as ToolDefinition);
-          entries.push({ name: (tool as ToolDefinition).name, file });
-        }
-      }
-    } catch (error) {
-      logger.warn(
-        `[Registry] 加载工具失败: ${file} ${error instanceof Error ? error.message : error}`,
+  const files: string[] = [];
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (
+      entry.isFile() &&
+      MODULE_EXTENSIONS.has(extname(entry.name).toLowerCase())
+    )
+      files.push(join(dir, entry.name));
+    else if (entry.isFile() && extname(entry.name) === ".py")
+      throw new Error(
+        `${join(dir, entry.name)}: Python 工具请改为 TS/JS 入口，脚本可由 runProcess 调用`,
       );
+    else if (entry.isDirectory()) {
+      const children = await readdir(join(dir, entry.name), {
+        withFileTypes: true,
+      });
+      const indexes = children.filter(
+        (file) => file.isFile() && /^index\.(ts|js|mjs)$/.test(file.name),
+      );
+      if (indexes.length > 1)
+        throw new Error(`${join(dir, entry.name)}: 只能保留一个 index 入口`);
+      if (indexes[0]) files.push(join(dir, entry.name, indexes[0].name));
     }
   }
-
-  const signature = entries.map((e) => `${e.name}(${e.file})`).join(", ");
-  if (signature !== _lastToolSignature) {
-    const isFirst = _lastToolSignature === null;
-    _lastToolSignature = signature;
-    // 首次加载的逐行清单由 Runtime.printAvailableResources 统一打印（Skills 之后）；
-    // 这里只在工具集发生变化（热更新）时打一条简短通知
-    if (!isFirst)
-      logger.info(
-        `[Registry] 工具集变化，已重新加载 ${entries.length} 个自定义工具`,
-      );
-  }
-
-  return tools;
+  return files;
 }
 
-/**
- * 创建工具注册表（异步版本，加载 .agent/tools/ 下的用户自定义工具）
- */
+/** Discovery and validation only; tools own business logic, Guard owns authorization. */
 export async function createToolRegistryAsync(
   cwd: string,
+  selection: ResourceSelection = { enabled: true, include: ["*"], exclude: [] },
 ): Promise<ToolDefinition[]> {
-  return loadCustomTools(cwd);
+  if (!selection.enabled) return [];
+  const tools = new Map<string, ToolDefinition>();
+  for (const file of await toolFiles(join(cwd, ".agent", "tools"))) {
+    for (const tool of await loadToolModule(file)) {
+      if (RESERVED_TOOL_NAMES.has(tool.name))
+        throw new Error(`${file}: 工具名 ${tool.name} 与内置能力冲突`);
+      if (tools.has(tool.name))
+        throw new Error(`${file}: 工具名 ${tool.name} 重复`);
+      tools.set(tool.name, tool);
+    }
+  }
+  return [...tools.values()].filter((tool) =>
+    resourceEnabled(selection, tool.name),
+  );
 }

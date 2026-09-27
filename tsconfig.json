@@ -16,5 +16,10 @@
     "allowImportingTsExtensions": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts",
+    ".agent/tools/**/*.ts",
+    "examples/**/*.ts"
+  ]
 }

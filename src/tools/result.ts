@@ -1,7 +1,9 @@
 /** Small, bounded results keep adapters independent of transport and card rendering. */
 export function textResult(value: unknown, maxChars = 20_000) {
   const text =
-    typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    typeof value === "string"
+      ? value
+      : (JSON.stringify(value, null, 2) ?? "null");
   return {
     content: [
       {

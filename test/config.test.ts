@@ -11,7 +11,7 @@ describe("loadConfig", () => {
   it("保留资源配置并读取唯一使用者", () => {
     const config = loadConfig({
       ...baseEnv,
-      FEISHU_PI_OWNER: "ou_owner",
+      FEISHU_PI_ADMIN: "ou_owner",
       FEISHU_PI_MAX_RESOURCE_MB: "8",
     });
     expect(config.showModelStats).toBe(true);
@@ -36,17 +36,5 @@ describe("loadConfig", () => {
     expect(
       loadConfig({ ...baseEnv, FEISHU_PI_MODEL_NAME: "gpt-4o" }).modelProvider,
     ).toBe("openai");
-  });
-
-  it("服务上下线通知可由环境变量覆盖，并支持换行和退出信号占位符", () => {
-    const config = loadConfig({
-      ...baseEnv,
-      FEISHU_PI_ONLINE_NOTICE: "上线\\n准备完毕",
-      FEISHU_PI_OFFLINE_NOTICE: "收到 {signal}，下线",
-    });
-    expect(config.onlineNotice).toBe("上线\n准备完毕");
-    expect(config.offlineNotice.replaceAll("{signal}", "SIGTERM")).toBe(
-      "收到 SIGTERM，下线",
-    );
   });
 });

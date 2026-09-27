@@ -17,13 +17,8 @@ export function processEnvironment(
     "COMSPEC",
     "LOCALAPPDATA",
     "APPDATA",
-    "NODE_EXTRA_CA_CERTS",
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
   ]) {
     if (process.env[key]) env[key] = process.env[key];
   }
-  if (process.env.NODE_OPTIONS?.includes("--use-system-ca"))
-    env.NODE_OPTIONS = "--use-system-ca";
   return { ...env, ...extra };
 }

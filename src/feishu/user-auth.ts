@@ -156,8 +156,7 @@ export interface UserAuthOptions {
   getIdentity?: (accessToken: string) => Promise<LoginIdentity | undefined>;
   /**
    * 登录绑定完成回调（Device Flow 成功、token 入库后触发）：
-   * 本人登录资料缓存用——main 侧比对登录者身份与 FEISHU_PI_OWNER，命中则把资料写入用户缓存，
-   * 重启后走缓存通道自动识别本人。
+   * main 将身份 API 返回的本人姓名写入资料缓存，供 FEISHU_PI_ADMIN 姓名匹配使用。
    */
   onLoginBound?: (
     info: LoginIdentity & { openId: string },
@@ -447,9 +446,7 @@ export class UserAuthService {
   }
 
   /** /login 状态总览用：登录态摘要（none=未登录 / expired=登录已过期 / active=有效）。 */
-  async loginStatus(
-    openId: string,
-  ): Promise<{
+  async loginStatus(openId: string): Promise<{
     state: "none" | "expired" | "active";
     scope: string;
     refreshExpiresAt: number;

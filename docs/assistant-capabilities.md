@@ -4,9 +4,8 @@
 
 | 配置 | 默认或用途 |
 |---|---|
-| `FEISHU_PI_OWNER` | 唯一使用者的飞书 Open ID，启动前配置 |
+| `FEISHU_PI_ADMIN` | 唯一使用者的中文名、英文名或 Open ID；姓名须在本地资料缓存中唯一匹配 |
 | `MINICLAW_BROWSER_CHANNEL` | Windows 默认 msedge；其他平台默认 chrome |
-| `MINICLAW_USER_CLI` | 默认 0；显式允许本人主动授权的用户态 CLI 时设 1 |
 | `FEISHU_GUARD_BASE_URL / MODELS / API_KEY` | ask 审核接口；未配置时本人确认 |
 | `.agent/permissions.json` | deny / ask / allow，mtime 重载 |
 | `.agent/mcp.json` | MCP 服务；使用时读取，变更后重新连接 |

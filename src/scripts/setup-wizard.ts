@@ -21,10 +21,10 @@ async function main(): Promise<void> {
 
   console.log("\n下一步：");
   console.log(
-    "  1. 在 .env 配置 FEISHU_PI_OWNER=本人的 ou_...，并填写模型接口与密钥",
+    "  1. 在 .env 配置 FEISHU_PI_ADMIN=本人中文名、英文名或 Open ID（姓名须已缓存且唯一），并填写模型接口与密钥",
   );
   console.log(
-    "  2. npm start；要用本人账号操作时显式启用 MINICLAW_USER_CLI=1，再私聊 /login lark",
+    "  2. npm start；需要自动补全 @ 提及者资料时，私聊 /login lark 授权本人账号",
   );
   console.log("  3. 如开发者后台显示有待发布版本，请发布后权限方可全量生效");
 }

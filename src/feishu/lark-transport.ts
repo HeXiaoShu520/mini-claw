@@ -32,10 +32,6 @@ import {
   speechText,
   type InboundResource,
 } from "./inbound-content.ts";
-import {
-  transcribeAudio,
-  type AudioTranscriptionOptions,
-} from "./audio-transcriber.ts";
 import { SessionStore } from "../runtime/session-store.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -91,7 +87,6 @@ export interface LarkTransportConfig {
   /** 单个资源和单条消息资源总大小限制 */
   maxResourceBytes?: number;
   maxMessageResourceBytes?: number;
-  audioTranscription?: AudioTranscriptionOptions;
   /** 消息处理状态持久化，用于在预处理前去重 */
   messages?: MessageStore;
   /** 模型切换回调（/model 指令确认后触发，用于运行时热切换） */
@@ -134,7 +129,6 @@ export class LarkTransport implements FeishuTransport {
   private readonly messages?: MessageStore;
   private readonly maxResourceBytes: number;
   private readonly maxMessageResourceBytes: number;
-  private readonly audioTranscription?: AudioTranscriptionOptions;
 
   constructor(config: LarkTransportConfig) {
     this.appId = config.appId;
@@ -153,7 +147,6 @@ export class LarkTransport implements FeishuTransport {
     this.maxResourceBytes = config.maxResourceBytes ?? 20 * 1024 * 1024;
     this.maxMessageResourceBytes =
       config.maxMessageResourceBytes ?? this.maxResourceBytes * 2;
-    this.audioTranscription = config.audioTranscription;
     this.larkCli = new LarkCli(config.appId, config.userProfileDir);
     this.imageProcessor = new LarkImageProcessor(config.client, {
       maxResourceBytes: this.maxResourceBytes,
@@ -452,7 +445,6 @@ export class LarkTransport implements FeishuTransport {
           }
         }
       }
-      let nativeTranscript: string | undefined;
       if (messageType === "audio") {
         let transcript = speechText(rawContent, messageType);
         if (!transcript) {
@@ -461,7 +453,6 @@ export class LarkTransport implements FeishuTransport {
           );
           transcript = speechText(fetched?.body?.content || "", messageType);
         }
-        nativeTranscript = transcript;
         cleanedText = transcript
           ? `[语音转写] ${transcript}`
           : "[语音消息，飞书未提供转写]";
@@ -482,18 +473,8 @@ export class LarkTransport implements FeishuTransport {
               this.maxMessageResourceBytes - imageBytes,
             ),
           },
-          nativeTranscript
-            ? undefined
-            : async (data) =>
-                await transcribeAudio(data, this.audioTranscription ?? {}),
         );
-        if (attachmentNote) {
-          if (attachmentNote.includes("[语音转写]"))
-            cleanedText = cleanedText
-              .replace("[语音消息，飞书未提供转写]", "")
-              .trim();
-          cleanedText += attachmentNote;
-        }
+        if (attachmentNote) cleanedText += attachmentNote;
       }
 
       if (imageNotes.length > 0) {
@@ -1079,29 +1060,6 @@ export class LarkTransport implements FeishuTransport {
       }
       let body = quotedCard?.text;
       body ||= speechText(rawContent, type) || synthetic.content;
-      if (type === "audio" && !speechText(rawContent, type)) {
-        const audioKey = synthetic.resources.find(
-          (resource) => resource.type === "audio",
-        )?.fileKey;
-        if (audioKey) {
-          try {
-            const audio = await this.downloadResource(
-              current,
-              audioKey,
-              "audio",
-            );
-            const transcript = await transcribeAudio(
-              audio,
-              this.audioTranscription ?? {},
-            );
-            if (transcript) body = `[语音转写] ${transcript}`;
-          } catch (error) {
-            logger.warn(
-              `[LarkTransport] 引用语音转写失败 ${current}: ${error instanceof Error ? error.message : String(error)}`,
-            );
-          }
-        }
-      }
       const imageKeys = synthetic.resources
         .filter((resource) => resource.type === "image")
         .map((resource) => resource.fileKey);
@@ -1180,18 +1138,6 @@ export class LarkTransport implements FeishuTransport {
       },
     });
   }
-
-  /** 以文本私聊指定用户；飞书按 open_id 自动投递到机器人与该用户的会话。 */
-  async sendTextToUser(openId: string, text: string): Promise<void> {
-    await this.client.im.v1.message.create({
-      params: { receive_id_type: "open_id" },
-      data: {
-        receive_id: openId,
-        msg_type: "text",
-        content: JSON.stringify({ text }),
-      },
-    });
-  }
 }
 
 /**
@@ -1212,7 +1158,6 @@ export async function downloadFileAttachments(
     maxResourceBytes: 20 * 1024 * 1024,
     maxTotalBytes: 40 * 1024 * 1024,
   },
-  transcribe?: (data: Buffer, fileName: string) => Promise<string | undefined>,
 ): Promise<string> {
   const fileResources = resources.filter(
     (r) => ["file", "audio", "video", "media"].includes(r.type) && r.fileKey,
@@ -1250,16 +1195,6 @@ export async function downloadFileAttachments(
       await writeFile(filePath, buffer);
       totalBytes += buffer.length;
       attachmentNote += `\n[${resource.type === "audio" ? "语音" : resource.type === "video" ? "视频" : "附件"}] ${fileName} 已保存到: ${filePath}`;
-      if (resource.type === "audio" && transcribe) {
-        try {
-          const words = await transcribe(buffer, fileName);
-          if (words) attachmentNote += `\n[语音转写] ${words}`;
-        } catch (error) {
-          logger.warn(
-            `[LarkTransport] 语音转写失败 ${fileName}: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-      }
     } catch (error) {
       logger.warn(
         `[LarkTransport] 下载附件失败 ${resource.fileKey}: ${error instanceof Error ? error.message : error}`,

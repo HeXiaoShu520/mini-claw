@@ -11,18 +11,10 @@ import { processEnvironment } from "../process/environment.ts";
  * customTools 后写覆盖）。shell 只持有本次调用的本地代理句柄；每条 CLI 真正启动时
  * 才按当前会话用户取得凭证，普通 shell 命令不接触 token 或应用密钥。
  *
- * 身份契约（由技能/命令写法决定，与用户约定一致）：
- * - 命令省略身份或显式 `--as user` → 只给该次 CLI 子进程发起人的用户 token；
- * - 显式 `--as bot` → 只给该次 CLI 子进程当前应用的 App ID/Secret；
- * - 每次调用使用临时的 CLI 配置目录，隔离宿主机账号缓存；
- * - 用户未登录 / token 过期 → 拒绝执行并发起授权，不回退到 CLI 默认账号。
- *
- * 进程级隔离：凭证 env 只作用于 CLI 子进程，无全局状态，多用户并发互不可见。
- *
- * 缺权限自动补授权：lark-cli 以用户身份调用时若遇到 missing_scopes 类错误
- * （用户 token 缺少该业务 scope，且该 scope 不在已授权白名单内），自动触发
- * onMissingScopes 回调（main.ts 接 UserAuthService.ensureScopes 增量 Device Flow，
- * 授权卡片发到当前会话），并把提示文案追加到工具输出，让模型转告用户完成授权后重试。
+ * main 固定启用 restrictUserCredentials，仅显式 --as bot 的飞书 CLI 可取得
+ * 本机器人的 App ID/Secret；省略身份、--as user 与 Meegle 用户态 CLI 均拒绝。
+ * 每次调用使用临时 CLI 配置目录，不读取宿主机账号缓存。
+ * 本人资料查询通过独立预处理通道进行，AI 的执行通道不注册用户令牌获取回调。
  */
 
 /** 单个 CLI provider 的凭证注入规则（lark 内置；其他 CLI 可经 extraInjections 扩展） */
@@ -325,7 +317,7 @@ export function createIdentityBashTool(
   const metadata = createBashTool(options.cwd) as ToolDefinition;
   return {
     ...metadata,
-    description: `${metadata.description}\n飞书/Meegle CLI 由服务绑定本人身份，shell 可使用 cd、管道和重定向。不要调用 CLI auth status/login/logout，授权使用 /status 或 /login。机器人回复与卡片由飞书通道发送。长时间运行且需查询进度的命令使用 background_task；执行后检查结果，退出码为 0 不代表业务一定成功。`,
+    description: `${metadata.description}\n飞书 CLI 必须显式指定 --as bot，使用本机器人的应用凭证。AI 不可使用用户令牌或 Meegle 用户态 CLI。shell 可使用 cd、管道和重定向。不要调用 CLI auth status/login/logout，用户通过 /status、/login、/logout 管理授权；人物资料由消息预处理自动查询。机器人回复与卡片由飞书通道发送。长时间运行且需查询进度的命令使用 background_task；执行后检查结果，退出码为 0 不代表业务一定成功。`,
     execute: async (toolCallId, params, signal, onUpdate, ctx) => {
       const lease = await openIdentityShell(options);
       try {

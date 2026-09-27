@@ -16,7 +16,7 @@ npm run setup
 向导配置飞书应用。在生成的 `.env` 中填写：
 
 ```dotenv
-FEISHU_PI_OWNER=ou_你的飞书OpenID
+FEISHU_PI_ADMIN=ou_你的飞书OpenID
 FEISHU_PI_MODEL_NAME=你的模型名称
 FEISHU_PI_MODEL_BASE_URL=你的模型接口地址
 FEISHU_PI_MODEL_API_KEY=你的模型密钥
@@ -28,7 +28,9 @@ FEISHU_PI_MODEL_API_KEY=你的模型密钥
 npm start
 ```
 
-机器人只处理 `FEISHU_PI_OWNER` 的私聊，以及本人在群中 @机器人的消息。其他人不能启动 Agent 或批准卡片。本人尚未配置或无法识别时，服务停止启动，不自动开放给所有人。
+`FEISHU_PI_ADMIN` 可填写本人中文名、英文名或 Open ID。姓名按本地资料缓存唯一匹配，英文名忽略大小写；未缓存或重名时填写 Open ID。启动不查询团队或通讯录。
+
+机器人只处理该使用者的私聊，以及本人在群中 @机器人的消息。其他人不能启动 Agent 或批准卡片。本人尚未配置或无法识别时，服务停止启动，不自动开放给所有人。
 
 飞书应用需要启用机器人、长连接和 `im.message.receive_v1`、`card.action.trigger`。向导提供预置权限；应用后台提示待发布时，需要发布才能生效。Open ID 可以通过飞书开发者后台的用户 ID 查询工具获取；使用本机器人应用对应的 ID。
 
@@ -41,7 +43,7 @@ npm start
 | 记忆 | 一份个人 Markdown 记忆；按需增量索引，关键词、时间过滤、跨会话检索和原文读取 |
 | 后台任务 | 启动、状态、日志、取消、超时、并发限制、持久化记录和完成通知 |
 | MCP | 按需连接 stdio / Streamable HTTP / 显式 legacy SSE；工具发现与调用、资源和提示读取 |
-| 飞书 | 文本、图片、语音、附件、引用、CardKit 2.0 流式回复、人物提及与本人授权 |
+| 飞书 | 文本、图片、飞书自带语音转写、附件、引用、CardKit 2.0 流式回复、人物提及与本人授权 |
 | 定时任务 | 一次性、固定间隔、cron、时区、启停和手动执行 |
 | 扩展 | Markdown 技能，TS/JS/Python 工具和 Pi 扩展 |
 
@@ -68,9 +70,9 @@ npm start
 ## 本人账号与机器人身份
 
 - 回复和通知使用当前机器人的应用凭证。
-- `MINICLAW_USER_CLI=0` 保留原来的限制：AI 不能使用用户令牌，只允许机器人身份和固定人物资料查询。
-- 明确启用 `MINICLAW_USER_CLI=1` 后，用户态 CLI 只使用本人通过本工程 `/login lark` 或 `/login meegle` 授权的令牌。
-- 不读取本机 CLI 的默认登录账号；没有有效令牌就拒绝，并引导授权。
+- AI 的飞书 CLI 必须显式指定 `--as bot`，使用本机器人的应用凭证；用户态 CLI 直接拒绝。
+- 本人通过 `/login lark` 主动授权的用户令牌，只用于消息预处理的固定人物资料查询，不交给 AI。
+- 不读取本机 CLI 的默认登录账号；用户使用 `/status`、`/login`、`/logout` 管理授权。
 - 普通 shell、浏览器和 MCP 不继承模型、飞书应用及用户令牌。MCP 所需密钥必须在配置中明确引用环境变量。
 
 ## 扩展与开发

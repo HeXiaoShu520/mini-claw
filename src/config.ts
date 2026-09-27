@@ -4,7 +4,6 @@ export interface FeishuPiAppConfig {
   feishuAppSecret: string;
   feishuOwner: string;
   browserChannel: string;
-  allowPersonalUserCli: boolean;
   cwd: string;
   /** 数据根目录（data/，已被 .gitignore 排除）：非会话数据（记忆/用户/凭证/会话索引/共享缓存） */
   dataDir: string;
@@ -19,10 +18,6 @@ export interface FeishuPiAppConfig {
   modelProvider: string;
   modelName: string;
   modelBaseUrl?: string;
-  /** 可选语音转写；不配置时只读取飞书消息自带的 speech_to_text。 */
-  audioTranscriptionModel?: string;
-  audioTranscriptionBaseUrl?: string;
-  audioTranscriptionApiKey?: string;
   /** 思考档位：off=关闭思考，low/high/max 各模型自动适配等效等级（FEISHU_PI_THINKING_LEVEL，默认 off） */
   thinkingLevel: ThinkingLevelConfig;
   /** 智能体审核接口（OpenAI 兼容）；未配置则ask 命中且无审核模型时弹本人卡 */
@@ -36,10 +31,6 @@ export interface FeishuPiAppConfig {
   approvalTimeoutMs: number;
   /** 回复卡末尾是否显示模型统计小字（模型 · token · ctx · 费用 · 耗时 · 会话别名）；工具过程状态不受影响 */
   showModelStats: boolean;
-  /** 服务完全就绪后发给本人的私聊文本（FEISHU_PI_ONLINE_NOTICE） */
-  onlineNotice: string;
-  /** 服务收到退出信号时发给本人的私聊文本；可用 {signal} 插入信号名（FEISHU_PI_OFFLINE_NOTICE） */
-  offlineNotice: string;
   /** 单个图片/附件允许的最大字节数 */
   maxResourceBytes: number;
   /** 一条消息所有图片/附件允许的最大总字节数 */
@@ -60,12 +51,6 @@ export function deriveModelProvider(modelName: string): string {
 function parseBoolEnv(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined || value.trim() === "") return fallback;
   return ["1", "true", "on", "yes"].includes(value.trim().toLowerCase());
-}
-
-/** 生命周期通知：支持在 .env 中用字面量 `\\n` 表示换行；空值沿用默认文本。 */
-function parseNoticeEnv(value: string | undefined, fallback: string): string {
-  const parsed = value?.replaceAll("\\n", "\n").trim();
-  return parsed || fallback;
 }
 
 /** 读取正整数配置；非法值回退默认值，避免启动阶段因可选参数失败。 */
@@ -129,11 +114,10 @@ export function loadConfig(
   return {
     feishuAppId: required("FEISHU_APP_ID"),
     feishuAppSecret: required("FEISHU_APP_SECRET"),
-    feishuOwner: env.FEISHU_PI_OWNER || env.FEISHU_PI_ADMIN || "",
+    feishuOwner: (env.FEISHU_PI_ADMIN ?? "").trim(),
     browserChannel:
       env.MINICLAW_BROWSER_CHANNEL ||
       (process.platform === "win32" ? "msedge" : "chrome"),
-    allowPersonalUserCli: parseBoolEnv(env.MINICLAW_USER_CLI, false),
     cwd: process.cwd(),
     // 会话目录根：会话的第一句话就为它建立一个专属目录，jsonl/图片/附件全在里面
     sessionsRoot: `${process.cwd()}/work_space`,
@@ -158,11 +142,6 @@ export function loadConfig(
       env.FEISHU_PI_MODEL_NAME ?? "claude-sonnet-4-6",
     ),
     modelBaseUrl: env.FEISHU_PI_MODEL_BASE_URL,
-    audioTranscriptionModel: env.FEISHU_PI_STT_MODEL || undefined,
-    audioTranscriptionBaseUrl:
-      env.FEISHU_PI_STT_BASE_URL || env.FEISHU_PI_MODEL_BASE_URL,
-    audioTranscriptionApiKey:
-      env.FEISHU_PI_STT_API_KEY || env.FEISHU_PI_MODEL_API_KEY,
     // 思考档位默认 off（关闭思考，pi 会显式发 thinking:disabled）：想开思考配 low/high/max
     thinkingLevel: parseThinkingLevel(env.FEISHU_PI_THINKING_LEVEL),
     // 智能体审核（策略外调用的综合判断）：OpenAI 兼容接口，支持逗号分隔多模型取安全交集
@@ -176,14 +155,6 @@ export function loadConfig(
     approvalTimeoutMs: 5 * 60_000,
     // 回复末尾的模型统计小字：默认显示；FEISHU_SHOW_MODEL_STATS=0/false/off 关闭（工具过程状态不受影响）
     showModelStats: parseBoolEnv(env.FEISHU_SHOW_MODEL_STATS, true),
-    onlineNotice: parseNoticeEnv(
-      env.FEISHU_PI_ONLINE_NOTICE,
-      "🟢 mini-claw 已上线，飞书通道、权限门禁和定时任务已就绪。",
-    ),
-    offlineNotice: parseNoticeEnv(
-      env.FEISHU_PI_OFFLINE_NOTICE,
-      "🔴 mini-claw 正在下线（{signal}）。",
-    ),
     // 资源和会话背压：单位分别为 MiB、MiB、条；默认值适合个人助理，可按部署调整。
     maxResourceBytes:
       parsePositiveIntEnv(env.FEISHU_PI_MAX_RESOURCE_MB, 20, 1024) *

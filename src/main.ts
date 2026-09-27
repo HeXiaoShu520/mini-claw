@@ -18,7 +18,6 @@ import {
 } from "./feishu/user-auth.ts";
 import {
   MeegleDeviceLogin,
-  MEEGLE_DEFAULT_HOST,
   StaticCredentialService,
 } from "./feishu/meegle-auth.ts";
 import { PeopleRoster } from "./feishu/people-roster.ts";
@@ -47,7 +46,6 @@ import type { FeishuContext } from "./context/types.ts";
 import { SlashCommandRegistrar } from "./feishu/slash-command.ts";
 import type { CleanupStats } from "./runtime/data-cleaner.ts";
 import { acquireInstanceLock } from "./utils/instance-lock.ts";
-import { sendOwnerLifecycleNotice } from "./feishu/owner-lifecycle-notice.ts";
 
 /** 授权请求失效（服务重启/已处理）时就地更新的提示卡文案。 */
 const APPROVAL_STALE_NOTICE =
@@ -220,7 +218,7 @@ export async function main(): Promise<void> {
   const credentialsDir = join(config.dataDir, "credentials");
   const vaultKeyFile = join(config.dataDir, ".vault-key");
   // Meegle（飞书项目）静态凭证：Device Flow 授权后 token 加密入库，
-  // 会话中的 Meegle CLI 实际启动时才注入（MEEGLE_USER_ACCESS_TOKEN / MEEGLE_HOST）
+  // 保留用户主动授权的存取；AI CLI 不取得这份令牌。
   const meegleAuth = new StaticCredentialService(
     join(credentialsDir, "meegle.vault.json"),
     vaultKeyFile,
@@ -230,7 +228,7 @@ export async function main(): Promise<void> {
   // `/new` 换代 = 新会话 id + 新目录，旧目录留在磁盘上等过期清理
   const sessions = new SessionStore(config.sessionsFile, config.sessionsRoot);
   // 用户飞书身份授权（Device Flow，RFC 8628）：按 openId 加密存取 user_access_token；
-  // 未登录/失效时由当前用户的 CLI 调用链路自动弹出授权链接。
+  // 本人主动 /login 授权，仅供固定人物资料查询。
   // 先于 transport 创建（冷启动本人识别要在 transport 装配前完成）；
   // updateCard/sendCard 闭包后置引用 transport，仅在实际收发卡片时才会执行。
   userAuth = new UserAuthService({
@@ -242,7 +240,7 @@ export async function main(): Promise<void> {
     updateCard: (messageId, card) => transport.updateCardById(messageId, card),
     // 增量授权：能力需要新 scope 时自动把授权卡发到该用户（open_id 口径，投递到与用户的私聊）
     sendCard: (openId, card) => transport.sendCardToUser(openId, card),
-    // /login 绑定完成时：本人尚未识别且登录者与本人配置匹配 → 资料入缓存（重启即生效）
+    // /login 绑定完成时，将身份接口返回的姓名写入本地资料缓存。
     onLoginBound: (info) => {
       if (handleLoginBoundImpl) handleLoginBoundImpl(info);
       else pendingLoginBound.push([info]);
@@ -274,11 +272,11 @@ export async function main(): Promise<void> {
       );
   })().catch((error) => logger.warn("[Main] 会话清洗失败:", error));
 
-  // 本人身份只由机器人应用权限与资料缓存解析，不遍历用户登录凭证。
+  // 本人身份只读显式配置与本地资料缓存，不查询通讯录或遍历登录凭证。
   ownerOpenId = await resolveOwnerOpenId(
-    client,
     config.feishuOwner,
     config.feishuAppId,
+    join(config.dataDir, "users"),
   );
   if (ownerOpenId) {
     logger.info(
@@ -288,15 +286,15 @@ export async function main(): Promise<void> {
     );
   } else if (config.feishuOwner) {
     logger.warn(
-      `[Main] 启动 3/4 本人身份解析失败（FEISHU_PI_OWNER=${config.feishuOwner}），将停止启动`,
+      `[Main] 启动 3/4 本人身份解析失败（FEISHU_PI_ADMIN=${config.feishuOwner}），将停止启动`,
     );
   } else {
-    logger.warn("[Main] 未配置 FEISHU_PI_OWNER：本人身份未配置");
+    logger.warn("[Main] 未配置 FEISHU_PI_ADMIN：本人身份未配置");
   }
 
   if (!ownerOpenId)
     throw new Error(
-      "请配置 FEISHU_PI_OWNER 为本人的飞书 open_id（ou_...）；旧 FEISHU_PI_ADMIN 可作为迁移来源。",
+      "请配置 FEISHU_PI_ADMIN 为本人的中文名、英文名或飞书 Open ID（ou_...）；姓名须在本地资料缓存中唯一匹配，未缓存或重名时请填写 Open ID。",
     );
 
   // ---------- 消息传输 ----------
@@ -315,11 +313,6 @@ export async function main(): Promise<void> {
     messages,
     maxResourceBytes: config.maxResourceBytes,
     maxMessageResourceBytes: config.maxMessageResourceBytes,
-    audioTranscription: {
-      model: config.audioTranscriptionModel,
-      baseUrl: config.audioTranscriptionBaseUrl,
-      apiKey: config.audioTranscriptionApiKey,
-    },
 
     ownerOpenId,
     searchMentionedUserProfile: createMentionProfileLookup({
@@ -336,8 +329,7 @@ export async function main(): Promise<void> {
     },
   });
 
-  /** /login 绑定完成时：① 身份 API 给出的姓名写入用户缓存；② 本人尚未识别且登录者与
-   *  FEISHU_PI_OWNER 匹配 → 记录资料，重启后走缓存通道自动识别。 */
+  /** /login 绑定完成时，将身份 API 给出的姓名写入资料缓存。 */
   const handleLoginBound = (info: {
     openId: string;
     name?: string;
@@ -347,17 +339,6 @@ export async function main(): Promise<void> {
     void transport
       .seedUserProfile(info.openId, { name: info.name, en_name: info.en_name })
       .catch((error) => logger.warn("[Main] 登录资料写入用户缓存失败:", error));
-    const identifier = config.feishuOwner;
-    if (!identifier || ownerOpenId) return;
-    const matched =
-      info.openId === identifier ||
-      info.name === identifier ||
-      info.en_name === identifier ||
-      (Boolean(info.email) && info.email === identifier);
-    if (!matched) return;
-    logger.info(
-      `[Main] 本人已通过登录识别（${info.name ?? info.openId}），重启服务后本人权限生效`,
-    );
   };
   // 处理器就绪：回放装配期间积压的登录事件
   handleLoginBoundImpl = handleLoginBound;
@@ -506,45 +487,9 @@ ${trimmed}`,
     appSecret: config.feishuAppSecret,
     botOpenId,
     botName,
-    restrictUserCredentials: !config.allowPersonalUserCli,
+    restrictUserCredentials: true,
     userId,
     chatId: context?.chatId,
-    getLarkToken: () => userAuth?.peekUserAccessToken(userId),
-    ensureLarkToken: () =>
-      userAuth?.getUserAccessToken(userId) ?? Promise.resolve(undefined),
-    // lark-cli 用户态命令缺 scope 时：发起增量 Device Flow（授权卡发到当前会话），
-    // 同意后 token 自动入库并刷新，重试即生效——用户无需手动 /login
-    onMissingScopes: (uid, _chatId, scopes) => {
-      void userAuth?.ensureScopes(uid, scopes).catch((error) => {
-        logger.warn(`[Main] 增量授权发起失败（${scopes.join(", ")}）:`, error);
-      });
-      logger.info(
-        `[Main] lark-cli 缺少用户 scope，已发起增量授权: ${scopes.join(", ")}（用户 ${uid}）`,
-      );
-      return `【补充授权已发起】本次调用缺少用户授权 scope：${scopes.join("、")}。已向你的飞书私聊发送补充授权卡片，请完成授权后重试本命令；授权完成后无需其他操作。`;
-    },
-    onNotLoggedIn: (uid) => {
-      // lark-cli 未登录/凭证失效：自动发起 Device Flow，授权链接卡推送到用户私聊
-      void userAuth
-        ?.ensureLogin(uid)
-        .catch((error) =>
-          logger.warn("[Main] lark-cli 登录链接推送失败:", error),
-        );
-    },
-    // Meegle（飞书项目）：/login meegle 授权的静态 token，仅在启动 CLI 时注入；
-    // 站点固定为飞书项目（MEEGLE_DEFAULT_HOST）；无凭证时自动发起到该用户私聊的授权
-    extraInjections: [
-      {
-        commandPattern: /^\s*meegle(?:\.exe)?(?:\s|$)/i,
-        envToken: "MEEGLE_USER_ACCESS_TOKEN",
-        staticEnv: { MEEGLE_HOST: MEEGLE_DEFAULT_HOST },
-        getToken: () => {
-          const token = meegleAuth.peekToken(userId);
-          if (!token) meegleDeviceLogin.beginFor(userId);
-          return token;
-        },
-      },
-    ],
   });
 
   const assistant = new AssistantServices({
@@ -583,9 +528,8 @@ ${trimmed}`,
       toolGuard: (toolPolicy, params, signal) =>
         toolGuard.check(toolPolicy, params, signal),
       scheduleService,
-      // 会话级带身份 bash：在每次 CLI 真正启动时绑定发起人；用户令牌仅在显式启用 MINICLAW_USER_CLI 后交给受控 CLI。
-      // 普通 shell 命令不接收凭证，未登录时拒绝该次 CLI 并推送授权链接。
-      // 用户态命令执行前按需刷新当前发起人的 token，不预热其他用户。
+      // 会话级受控 CLI：AI 只使用显式 --as bot 的飞书机器人身份。
+      // 普通 shell 不接收凭证；本人令牌只用于固定的人物资料查询流程。
       identityBash: (userId, context) =>
         createIdentityBashTool(identityOptions(userId, context)),
       ownerOpenId: ownerOpenId,
@@ -685,13 +629,6 @@ ${trimmed}`,
   // 恢复定时任务调度（任务持久化在 data/schedules.json）
   await scheduleService.start();
 
-  // 仅在飞书长连接与定时调度均完成后才报告上线，避免“已上线”但服务尚未可用。
-  await sendOwnerLifecycleNotice(
-    (openId, text) => transport.sendTextToUser(openId, text),
-    ownerOpenId,
-    config.onlineNotice,
-  );
-
   logger.info("[Main] 启动 4/4 服务开始工作");
 
   // 优雅退出处理：飞书连接后台断开 + 短宽限后立即退出，不阻塞终端
@@ -700,13 +637,6 @@ ${trimmed}`,
     if (exiting) return;
     exiting = true;
     logger.info(`[Main] 收到 ${signal} 信号，正在关闭服务...`);
-
-    // 此时连接仍在，先投递下线通知；失败或超时不阻塞后续资源回收。
-    await sendOwnerLifecycleNotice(
-      (openId, text) => transport.sendTextToUser(openId, text),
-      ownerOpenId,
-      config.offlineNotice.replaceAll("{signal}", signal),
-    );
 
     clearInterval(cleanupTimer);
     scheduleService.stop();
